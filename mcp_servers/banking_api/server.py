@@ -19,19 +19,21 @@ import re
 import time
 from collections import deque
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
-_BANKING_API_KEY = os.environ.get("BANKING_MCP_API_KEY") or "lab-banking-key-001"
+_AUDIT_LOG_PATH = Path(__file__).parent.parent.parent / "audit_log" / "banking_api_calls.jsonl"
+
 _ACCOUNT_ID_RE = re.compile(r"^ACC-\d{4}-[A-Z0-9]+-\d{3,}$")
 _CUSTOMER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 
-if not os.environ.get("BANKING_MCP_API_KEY"):
-    import warnings
-    warnings.warn(
-        "BANKING_MCP_API_KEY not set; using insecure default. "
-        "Set the environment variable before use.",
-        stacklevel=1,
+_raw_key = os.environ.get("BANKING_MCP_API_KEY")
+if not _raw_key:
+    raise RuntimeError(
+        "BANKING_MCP_API_KEY environment variable is required but not set. "
+        "Export it before starting the server."
     )
+_BANKING_API_KEY: str = _raw_key
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -98,6 +100,16 @@ def monitored(fn: Callable[..., Any]) -> Callable[..., Any]:
             "ms": elapsed_ms,
         }
         _EVENTS.appendleft(event)
+        # Persist to audit log for PCI DSS Req 10 compliance
+        _AUDIT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _AUDIT_LOG_PATH.open("a", encoding="utf-8") as _fh:
+            _fh.write(json.dumps({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "tool": fn.__name__,
+                "request": event["request"],
+                "response": event["response"],
+                "ms": elapsed_ms,
+            }) + "\n")
         print(
             f"{_C_IN}→ IN  {event['ts']}  {fn.__name__}"
             f"({json.dumps(event['request'])}){_C_END}"
