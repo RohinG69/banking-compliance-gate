@@ -14,11 +14,16 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import re
 import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable
+
+_BANKING_API_KEY = os.environ.get("BANKING_MCP_API_KEY", "lab-banking-key-001")
+_ACCOUNT_ID_RE = re.compile(r"^ACC-\d{4}-[A-Z0-9]+-\d{3,}$")
+_CUSTOMER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -128,6 +133,12 @@ def initiate_transfer(
     amount_inr: int,
 ) -> dict[str, Any]:
     """Initiate a mock transfer between accounts."""
+    if not _ACCOUNT_ID_RE.match(str(from_account)):
+        return {"status": "error", "error": "Invalid from_account format"}
+    if not _ACCOUNT_ID_RE.match(str(to_account)):
+        return {"status": "error", "error": "Invalid to_account format"}
+    if not isinstance(amount_inr, int) or amount_inr <= 0:
+        return {"status": "error", "error": "amount_inr must be a positive integer"}
     return {
         "status": "accepted",
         "from_account": from_account,
@@ -156,6 +167,12 @@ def apply_for_loan(
     tenure_months: int,
 ) -> dict[str, Any]:
     """Submit a mock loan application."""
+    if not _CUSTOMER_ID_RE.match(str(customer_id)):
+        return {"status": "error", "error": "Invalid customer_id format"}
+    if not isinstance(loan_amount_inr, int) or loan_amount_inr <= 0:
+        return {"status": "error", "error": "loan_amount_inr must be a positive integer"}
+    if not isinstance(tenure_months, int) or not (6 <= tenure_months <= 360):
+        return {"status": "error", "error": "tenure_months must be between 6 and 360"}
     return {
         "status": "submitted",
         "customer_id": customer_id,
@@ -185,6 +202,9 @@ async def events(_: Request) -> JSONResponse:
 @mcp.custom_route("/ingest", methods=["POST"])
 async def ingest(request: Request) -> JSONResponse:
     """Accept tool-call events forwarded by other lab MCP servers (stdio)."""
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key != _BANKING_API_KEY:
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
     try:
         event = await request.json()
     except Exception:
