@@ -21,9 +21,17 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-_BANKING_API_KEY = os.environ.get("BANKING_MCP_API_KEY", "lab-banking-key-001")
+_BANKING_API_KEY = os.environ.get("BANKING_MCP_API_KEY") or "lab-banking-key-001"
 _ACCOUNT_ID_RE = re.compile(r"^ACC-\d{4}-[A-Z0-9]+-\d{3,}$")
 _CUSTOMER_ID_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+if not os.environ.get("BANKING_MCP_API_KEY"):
+    import warnings
+    warnings.warn(
+        "BANKING_MCP_API_KEY not set; using insecure default. "
+        "Set the environment variable before use.",
+        stacklevel=1,
+    )
 
 try:
     from mcp.server.fastmcp import FastMCP
@@ -37,7 +45,7 @@ except ImportError as exc:
 
 mcp = FastMCP(
     "banking-api",
-    host="0.0.0.0",
+    host="127.0.0.1",
     port=8080,
 )
 
@@ -113,6 +121,8 @@ def monitored(fn: Callable[..., Any]) -> Callable[..., Any]:
 @monitored
 def get_account_balance(account_id: str) -> dict[str, Any]:
     """Return account balance for a lab account ID."""
+    if not _ACCOUNT_ID_RE.match(str(account_id)):
+        return {"status": "error", "error": "Invalid account_id format"}
     account = _ACCOUNTS.get(
         account_id,
         {
@@ -188,8 +198,11 @@ def apply_for_loan(
 
 
 @mcp.custom_route("/events", methods=["GET"])
-async def events(_: Request) -> JSONResponse:
+async def events(request: Request) -> JSONResponse:
     """JSON feed of recent tool-call events, newest first."""
+    api_key = request.headers.get("X-API-Key", "")
+    if api_key != _BANKING_API_KEY:
+        return JSONResponse({"ok": False, "error": "unauthorized"}, status_code=401)
     return JSONResponse(
         {
             "uptime_s": int(time.time() - _STARTED_AT),
@@ -341,7 +354,7 @@ async def dashboard(_: Request) -> HTMLResponse:
 
 if __name__ == "__main__":
     print("INFO: Banking API MCP Server starting...")
-    print("INFO: Listening on http://0.0.0.0:8080")
+    print("INFO: Listening on http://127.0.0.1:8080")
     print("INFO: SSE endpoint:       http://localhost:8080/sse")
     print("INFO: Traffic dashboard:  http://localhost:8080/dashboard  <-- open in browser")
     print("INFO: Event ingest:       POST /ingest (customer-info forwards events here)")
